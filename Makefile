@@ -54,7 +54,10 @@ EXT=$(EXT_$(SYS))
 
 PROGS=rtmpdump rtmpgw rtmpsrv rtmpsuck
 
-all:	$(LIBRTMP) $(PROGS)
+all:	$(LIBRTMP) $(PROGS) demo
+
+demo: $(LIBRTMP) demo.c
+	$(CC) -Wall -o demo demo.c $(LIB_RTMP)
 
 $(PROGS): $(LIBRTMP)
 
