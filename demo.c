@@ -2,13 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#ifndef WIN32
 #include <unistd.h>
-#endif
+#include <sys/times.h>
 
-#include "librtmp/rtmp.h"
-#include "librtmp/log.h"
-//#include "demo.h"
+#include "rtmp_sample_api.h"
+#include "demo.h"
 
 #define HTON16(x)  ((x>>8&0xff)|(x<<8&0xff00))
 #define HTON24(x)  ((x>>16&0xff)|(x<<16&0xff0000)|(x&0xff00))
@@ -62,200 +60,13 @@ int ReadTime(uint32_t *utime,FILE*fp){
     *utime=HTONTIME(*utime);
     return 1;
 }
-
-//Publish using RTMP_SendPacket()
-int publish_using_packet(){
-    RTMP *rtmp=NULL;
-    RTMPPacket *packet=NULL;
-    uint32_t start_time=0;
-    uint32_t now_time=0;
-    uint32_t add_time_times=0;
-    //the timestamp of the previous frame
-    long pre_frame_time=0;
-    long lasttime=0;
-    //int bNextIsKey=1;
-    uint32_t preTagsize=0;
-
-    //packet attributes
-    uint32_t type=0;
-    uint32_t datalength=0;
-    uint32_t timestamp=0;
-    uint32_t streamid=0;
-
-    FILE*fp=NULL;
-    fp=fopen(LOCAL_FILE,"rb");
-    if (!fp){
-        RTMP_LogPrintf("Open File Error.\n");
-        return -1;
-    }
-
-    /* set log level */
-    //RTMP_LogLevel loglvl=RTMP_LOGDEBUG;
-    //RTMP_LogSetLevel(loglvl);
-
-    rtmp=RTMP_Alloc();
-    RTMP_Init(rtmp);
-    //set connection timeout,default 30s
-    rtmp->Link.timeout=5;
-    if(!RTMP_SetupURL(rtmp,RTMP_SERVER_URL))
-    {
-        RTMP_Log(RTMP_LOGERROR,"SetupURL Err\n");
-        RTMP_Free(rtmp);
-        return -1;
-    }
-
-    //if unable,the AMF command would be 'play' instead of 'publish'
-    RTMP_EnableWrite(rtmp);
-    if (!RTMP_Connect(rtmp,NULL)){
-        RTMP_Log(RTMP_LOGERROR,"Connect Err\n");
-        RTMP_Free(rtmp);
-        return -1;
-    }
-
-    if (!RTMP_ConnectStream(rtmp,0)){
-        RTMP_Log(RTMP_LOGERROR,"ConnectStream Err\n");
-        RTMP_Close(rtmp);
-        RTMP_Free(rtmp);
-        return -1;
-    }
-
-    packet=(RTMPPacket*)malloc(sizeof(RTMPPacket));
-    RTMPPacket_Alloc(packet,1024*1500);
-    RTMPPacket_Reset(packet);
-
-    packet->m_hasAbsTimestamp = 0;        
-    packet->m_nChannel = 0x04;
-    packet->m_nInfoField2 = rtmp->m_stream_id;
-    
-    while(1) {
-
-    RTMP_LogPrintf("Start to send data ...\n");
-
-    fp=fopen(LOCAL_FILE,"rb");
-    if (!fp){
-        RTMP_LogPrintf("Open File Error.\n");
-        return -1;
-    }
-
-    //jump over FLV Header
-    fseek(fp,9,SEEK_SET);
-    //jump over previousTagSizen
-    fseek(fp,4,SEEK_CUR);   
-
-    start_time=RTMP_GetTime();
-    lasttime = 0;
-    pre_frame_time = 0;
-    RTMP_LogPrintf("add_time_times:%8u ms\n",add_time_times);
-
-    while(1)
-    {
-        //if((((now_time=RTMP_GetTime())-start_time) < (pre_frame_time)) && bNextIsKey){        
-        if(((now_time=RTMP_GetTime())-start_time) < (pre_frame_time)){        
-            //wait for 1 sec if the send process is too fast
-            //this mechanism is not very good,need some improvement
-            if(pre_frame_time>lasttime){
-                RTMP_LogPrintf("TimeStamp:%8lu ms\n",pre_frame_time);
-                lasttime=pre_frame_time;
-            }
-            usleep(10000); // 10ms
-            continue;
-        }
-        //not quite the same as FLV spec
-        if(!ReadU8(&type,fp))
-        {
-            printf("line:%d\n",__LINE__);
-            break;
-        }
-        if(!ReadU24(&datalength,fp))
-        {
-            printf("line:%d\n",__LINE__);
-            break;
-        }
-        if(!ReadTime(&timestamp,fp))
-        {
-            printf("line:%d\n",__LINE__);
-            break;
-        }
-        if(!ReadU24(&streamid,fp))
-        {
-            printf("line:%d\n",__LINE__);
-            break;
-        }
-
-        if (type!=0x08&&type!=0x09){
-            //jump over non_audio and non_video frame，
-            //jump over next previousTagSizen at the same time
-            fseek(fp,datalength+4,SEEK_CUR);
-            continue;
-        }
-
-        if(fread(packet->m_body,1,datalength,fp)!=datalength)
-        {
-            break;
-            printf("line:%d\n",__LINE__);
-        }
-
-        packet->m_headerType = RTMP_PACKET_SIZE_LARGE;
-        packet->m_nTimeStamp = timestamp + add_time_times;
-        packet->m_packetType = type;
-        packet->m_nBodySize  = datalength;
-        pre_frame_time=timestamp;
-
-        if (!RTMP_IsConnected(rtmp)){
-            RTMP_Log(RTMP_LOGERROR,"rtmp is not connect\n");
-            printf("line:%d\n",__LINE__);
-            break;
-        }
-        if (!RTMP_SendPacket(rtmp,packet,0)){
-            RTMP_Log(RTMP_LOGERROR,"Send Error\n");
-            printf("line:%d\n",__LINE__);
-            break;
-        }
-        if(!ReadU32(&preTagsize,fp))
-        {
-            printf("line:%d\n",__LINE__);
-            break;
-        }
-        if(!PeekU8(&type,fp))
-        {
-            printf("line:%d\n",__LINE__);
-            break;
-        }
-        if(type==0x09){
-            if(fseek(fp,11,SEEK_CUR)!=0)
-                break;
-            if(!PeekU8(&type,fp)){
-                break;
-            }
-            /*
-            if(type==0x17)
-                bNextIsKey=1;
-            else
-                bNextIsKey=0;
-            */
-            fseek(fp,-11,SEEK_CUR);
-        }
-    } 
-
-    RTMP_LogPrintf("\nSend Data Over\n");
-    add_time_times += 237080;
-    if(fp)
-        fclose(fp);
-    }
-
-    if (rtmp!=NULL){
-        RTMP_Close(rtmp);
-        RTMP_Free(rtmp); 
-        rtmp=NULL;
-    }
-    if (packet!=NULL){
-        RTMPPacket_Free(packet);
-        free(packet);
-        packet=NULL;
-    }
-    return 0;
+static int clk_tck;
+uint32_t GetTime()
+{
+  struct tms t;
+  if (!clk_tck) clk_tck = sysconf(_SC_CLK_TCK);
+  return times(&t) * 1000 / clk_tck;
 }
- 
 //Publish using RTMP_Write()
 int publish_using_write(){
     uint32_t start_time=0;
@@ -270,60 +81,32 @@ int publish_using_write(){
     uint32_t datalength=0;
     uint32_t timestamp=0;
 
-    RTMP *rtmp=NULL; 
-
     FILE*fp=NULL;
     fp=fopen(LOCAL_FILE,"rb");
     if (!fp){
-        RTMP_LogPrintf("Open File Error.\n");
+        printf("Open File Error.\n");
         return -1;
     }
- 
+
     /* set log level */
     //RTMP_LogLevel loglvl=RTMP_LOGDEBUG;
     //RTMP_LogSetLevel(loglvl);
- 
-    rtmp=RTMP_Alloc();
-    RTMP_Init(rtmp);
-    //set connection timeout,default 30s
-    rtmp->Link.timeout=5;
-    if(!RTMP_SetupURL(rtmp,RTMP_SERVER_URL))
-    {
-        RTMP_Log(RTMP_LOGERROR,"SetupURL Err\n");
-        RTMP_Free(rtmp);
-        return -1;
-    }
- 
-    RTMP_EnableWrite(rtmp);
-    //1hour
-    RTMP_SetBufferMS(rtmp, 3600*1000);
-    if (!RTMP_Connect(rtmp,NULL)){
-        RTMP_Log(RTMP_LOGERROR,"Connect Err\n");
-        RTMP_Free(rtmp);
-        return -1;
-    }
-
-    if (!RTMP_ConnectStream(rtmp,0)){
-        RTMP_Log(RTMP_LOGERROR,"ConnectStream Err\n");
-        RTMP_Close(rtmp);
-        RTMP_Free(rtmp);
-        return -1;
-    }
+    rtmp_sample_init();
+    rtmp_sample_connect(RTMP_SERVER_URL);
 
     printf("Start to send data ...\n");
-
     //jump over FLV Header
     fseek(fp,9,SEEK_SET);
     //jump over previousTagSizen
-    fseek(fp,4,SEEK_CUR);   
-    start_time=RTMP_GetTime();
+    fseek(fp,4,SEEK_CUR);
+    start_time=GetTime();
     while(1)
     {
-        if((((now_time=RTMP_GetTime())-start_time)<(pre_frame_time)) && bNextIsKey){
+        if((((now_time=GetTime())-start_time)<(pre_frame_time)) && bNextIsKey){
             //wait for 1 sec if the send process is too fast
             //this mechanism is not very good,need some improvement
             if(pre_frame_time>lasttime){
-                RTMP_LogPrintf("TimeStamp:%8u ms\n",pre_frame_time);
+                printf("TimeStamp:%8u ms\n",pre_frame_time);
                 lasttime=pre_frame_time;
             }
             sleep(1);
@@ -331,13 +114,13 @@ int publish_using_write(){
         }
 
         //jump over type
-        fseek(fp,1,SEEK_CUR);   
+        fseek(fp,1,SEEK_CUR);
         if(!ReadU24(&datalength,fp))
             break;
         if(!ReadTime(&timestamp,fp))
             break;
         //jump back
-        fseek(fp,-8,SEEK_CUR);  
+        fseek(fp,-8,SEEK_CUR);
 
         pFileBuf=(char*)malloc(11+datalength+4);
         memset(pFileBuf,0,11+datalength+4);
@@ -345,15 +128,7 @@ int publish_using_write(){
             break;
 
         pre_frame_time=timestamp;
-            
-        if (!RTMP_IsConnected(rtmp)){
-            RTMP_Log(RTMP_LOGERROR,"rtmp is not connect\n");
-            break;
-        }
-        if (!RTMP_Write(rtmp,pFileBuf,11+datalength+4)){
-            RTMP_Log(RTMP_LOGERROR,"Rtmp Write Error\n");
-            break;
-        }
+        rtmp_sample_add_data(pFileBuf, 11 + datalength + 4);
 
         free(pFileBuf);
         pFileBuf=NULL;
@@ -373,29 +148,24 @@ int publish_using_write(){
             fseek(fp,-11,SEEK_CUR);
         }
     }
- 
-    RTMP_LogPrintf("\nSend Data Over\n");
-    
-    if(fp)
-            fclose(fp);
 
-    if (rtmp!=NULL){
-        RTMP_Close(rtmp);
-        RTMP_Free(rtmp);
-        rtmp=NULL;
-    }
+    printf("\nSend Data Over\n");
+
+    if(fp)
+        fclose(fp);
+
+    rtmp_sample_disconnect();
+    rtmp_sample_final();
 
     if(pFileBuf){
         free(pFileBuf);
         pFileBuf=NULL;
     }
- 
+
     return 0;
 }
- 
+
 int main(int argc, char* argv[]){
-    //2 Methods:
-    publish_using_packet();
-    //publish_using_write();
+    publish_using_write();
     return 0;
 }

@@ -5,7 +5,7 @@ prefix=/usr/local
 CC=$(CROSS_COMPILE)gcc
 LD=$(CROSS_COMPILE)ld
 
-SYS=posix
+SYS=darwin
 #SYS=mingw
 
 CRYPTO=OPENSSL
@@ -56,8 +56,15 @@ PROGS=rtmpdump rtmpgw rtmpsrv rtmpsuck
 
 all:	$(LIBRTMP) $(PROGS) demo
 
-demo: $(LIBRTMP) demo.c
-	$(CC) -Wall -o demo demo.c $(LIB_RTMP)
+api: $(LIBRTMP) rtmp_sample_api.c
+	$(CC) -c -Wall -o rtmp_sample_api.o rtmp_sample_api.c
+
+demo.o: demo.c
+	$(CC) -c -Wall -o demo.o demo.c
+
+demo: api demo.o
+	$(CC) -Wall -o demo demo.c rtmp_sample_api.c $(LIB_RTMP)
+	@echo make install before run demo
 
 $(PROGS): $(LIBRTMP)
 
