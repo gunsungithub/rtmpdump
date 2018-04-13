@@ -56,6 +56,9 @@ PROGS=rtmpdump rtmpgw rtmpsrv rtmpsuck
 
 all:	$(LIBRTMP) $(PROGS) demo
 
+test:
+	$(CC) -Wall test.c -o test -lavutil -lavformat -lswscale -lswresample -lavcodec -lm
+
 api: $(LIBRTMP) rtmp_sample_api.c
 	$(CC) -c -Wall -o rtmp_sample_api.o rtmp_sample_api.c
 
