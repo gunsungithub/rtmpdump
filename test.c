@@ -532,8 +532,10 @@ int main(int argc, char **argv)
         if (!strcmp(argv[i], "-flags") || !strcmp(argv[i], "-fflags"))
             av_dict_set(&opt, argv[i]+1, argv[i+1], 0);
     }
+    av_register_all();
+    avformat_network_init();
     /* allocate the output media context */
-    avformat_alloc_output_context2(&oc, NULL, NULL, filename);
+    avformat_alloc_output_context2(&oc, NULL, "flv", filename);
     if (!oc) {
         printf("Could not deduce output format from file extension: using MPEG.\n");
         avformat_alloc_output_context2(&oc, NULL, "mpeg", filename);
@@ -585,6 +587,8 @@ int main(int argc, char **argv)
         } else {
             encode_audio = !write_audio_frame(oc, &audio_st);
         }
+        // tmp solution
+        usleep(10*1000);
     }
     /* Write the trailer, if any. The trailer must be written before you
      * close the CodecContexts open when you wrote the header; otherwise
